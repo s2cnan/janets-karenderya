@@ -7,7 +7,14 @@
   'use strict';
 
   const DB_NAME = 'janets_karenderya';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
+
+  // Known sample product IDs seeded in v1 that we remove on v1→v2 upgrade
+  // so new users start with a clean inventory (per spec: no prepopulated products).
+  const V1_SAMPLE_IDS = [
+    'p-tapsilog','p-tocilog','p-longsilog','p-adobo','p-sinigang',
+    'p-lumpia','p-turon','p-coke','p-water','p-rice','p-egg'
+  ];
 
   let dbPromise = null;
 
@@ -18,6 +25,16 @@
       req.onupgradeneeded = (e) => {
         const db = req.result;
         const tx = e.target.transaction;
+        const oldVer = e.oldVersion || 0;
+
+        // Migration v1 -> v2: remove pre-seeded sample products so users start empty.
+        // We only delete the known seeded IDs (not user-added products) and only if upgrading
+        // from v1 (fresh v2 installs have object stores created below, then seedDefaults runs
+        // but no longer adds any sample products).
+        if (oldVer === 1 && db.objectStoreNames.contains('products')) {
+          const pStore = tx.objectStore('products');
+          V1_SAMPLE_IDS.forEach(id => { try { pStore.delete(id); } catch (_) {} });
+        }
 
         // Categories
         if (!db.objectStoreNames.contains('categories')) {
