@@ -120,7 +120,11 @@
   function bindNav() {
     U.$$('.nav-item').forEach(b => b.addEventListener('click', () => App.setView(b.dataset.view)));
     U.$$('.bnav-item').forEach(b => b.addEventListener('click', () => App.setView(b.dataset.view)));
-    U.$$('.bnav-fab').forEach(b => b.addEventListener('click', () => App.setView('cashier')));
+    const fab = U.$('#fab-add');
+    if (fab) fab.addEventListener('click', () => {
+      App.setView('inventory');
+      setTimeout(() => { if (window.Inventory && Inventory.openEditor) Inventory.openEditor(); }, 60);
+    });
     U.$('#quick-cashier').addEventListener('click', () => App.setView('cashier'));
     U.$('#menu-toggle').addEventListener('click', toggleSidebar);
   }

@@ -106,24 +106,7 @@
       try { catStore.add(c); } catch (e) { /* ignore */ }
     });
 
-    // Seed sample products
-    const prodStore = tx.objectStore('products');
-    const sampleProducts = [
-      { id: 'p-tapsilog', sku: 'TAP-001', barcode: '', name: 'Tapsilog', categoryId: 'cat-rice', image: '', purchaseCost: 45, sellingPrice: 80, stock: 20, minStock: 5, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-tocilog', sku: 'TOC-001', barcode: '', name: 'Tocilog', categoryId: 'cat-rice', image: '', purchaseCost: 42, sellingPrice: 75, stock: 18, minStock: 5, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-longsilog', sku: 'LNG-001', barcode: '', name: 'Longsilog', categoryId: 'cat-rice', image: '', purchaseCost: 40, sellingPrice: 75, stock: 15, minStock: 5, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-adobo', sku: 'ADB-001', barcode: '', name: 'Adobong Manok', categoryId: 'cat-ulam', image: '', purchaseCost: 38, sellingPrice: 65, stock: 12, minStock: 4, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-sinigang', sku: 'SNG-001', barcode: '', name: 'Sinigang na Baboy', categoryId: 'cat-ulam', image: '', purchaseCost: 55, sellingPrice: 90, stock: 8, minStock: 4, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-lumpia', sku: 'LMP-001', barcode: '', name: 'Lumpiang Shanghai (6pcs)', categoryId: 'cat-snack', image: '', purchaseCost: 18, sellingPrice: 35, stock: 30, minStock: 10, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-turon', sku: 'TRN-001', barcode: '', name: 'Turon', categoryId: 'cat-snack', image: '', purchaseCost: 8, sellingPrice: 15, stock: 25, minStock: 10, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-coke', sku: 'COKE-001', barcode: '', name: 'Coca-Cola (330ml)', categoryId: 'cat-drink', image: '', purchaseCost: 32, sellingPrice: 50, stock: 24, minStock: 6, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-water', sku: 'WTR-001', barcode: '', name: 'Bottled Water (500ml)', categoryId: 'cat-drink', image: '', purchaseCost: 10, sellingPrice: 20, stock: 40, minStock: 12, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-rice', sku: 'RCE-001', barcode: '', name: 'Extra Rice', categoryId: 'cat-extra', image: '', purchaseCost: 8, sellingPrice: 15, stock: 100, minStock: 20, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-      { id: 'p-egg', sku: 'EGG-001', barcode: '', name: 'Itlog (Extra Egg)', categoryId: 'cat-extra', image: '', purchaseCost: 7, sellingPrice: 15, stock: 3, minStock: 10, supplier: '', expiry: '', status: 'active', createdAt: Date.now() },
-    ];
-    sampleProducts.forEach(p => {
-      try { prodStore.add(p); } catch (e) { /* ignore */ }
-    });
+    // NOTE: Inventory intentionally starts empty — user adds their own products.
 
     // Default settings
     const sStore = tx.objectStore('settings');
@@ -255,17 +238,60 @@
     return all.filter(p => p.status !== 'archived');
   }
   async function saveProduct(p) {
+    if (!p.name || !String(p.name).trim()) throw new Error('Product name is required');
+    const cost = Number(p.purchaseCost);
+    const price = Number(p.sellingPrice);
+    if (isNaN(cost) || cost < 0) throw new Error('Purchase cost must be a non-negative number');
+    if (isNaN(price) || price < 0) throw new Error('Selling price must be a non-negative number');
     if (!p.id) {
       p.id = uid('p');
       p.createdAt = Date.now();
       p.status = p.status || 'active';
+      p.stock = Math.max(0, Math.floor(Number(p.stock) || 0));
     }
     p.updatedAt = Date.now();
-    p.purchaseCost = Number(p.purchaseCost) || 0;
-    p.sellingPrice = Number(p.sellingPrice) || 0;
-    p.stock = Number(p.stock) || 0;
-    p.minStock = Number(p.minStock) || 0;
+    p.name = String(p.name).trim();
+    p.sku = (p.sku || '').trim();
+    p.barcode = (p.barcode || '').trim();
+    p.purchaseCost = Math.max(0, cost);
+    p.sellingPrice = Math.max(0, price);
+    p.stock = Math.max(0, Math.floor(Number(p.stock) || 0));
+    p.minStock = Math.max(0, Math.floor(Number(p.minStock) || 0));
     return put('products', p);
+  }
+
+  async function hasSaleHistory(productId) {
+    const all = await getAll('sales');
+    return all.some(s => s.items && s.items.some(it => it.productId === productId));
+  }
+
+  async function deleteProduct(productId) {
+    const sales = await getAll('sales');
+    const mvs = await getAll('stockMovements');
+    const used = sales.some(s => s.items && s.items.some(it => it.productId === productId));
+    const mvIdsToDelete = mvs.filter(m => m.productId === productId && !m.saleId).map(m => m.id);
+    const { t, stores } = await tx(['products', 'stockMovements'], 'readwrite');
+    return new Promise((resolve, reject) => {
+      try {
+        if (used) {
+          const getReq = stores.products.get(productId);
+          getReq.onsuccess = () => {
+            const p = getReq.result;
+            if (p) {
+              p.status = 'archived';
+              p.archivedAt = Date.now();
+              stores.products.put(p);
+            }
+          };
+        } else {
+          stores.products.delete(productId);
+          mvIdsToDelete.forEach(id => stores.stockMovements.delete(id));
+        }
+        t.oncomplete = () => resolve({ archived: used });
+        t.onerror = () => reject(t.error);
+        t.onabort = () => reject(t.error || new Error('Aborted'));
+      } catch (err) { reject(err); }
+    });
   }
   async function adjustStock(productId, delta, reason, note, saleId = null, txn) {
     const run = async (t, stores) => {
@@ -571,7 +597,7 @@
     getAll, getById, put, del, clear,
     getSetting, setSetting, getAllSettings,
     getCategories, saveCategory, deleteCategory,
-    getProducts, getActiveProducts, saveProduct, adjustStock,
+    getProducts, getActiveProducts, saveProduct, adjustStock, deleteProduct, hasSaleHistory,
     completeSale, getSales, getSalesInRange, voidSale,
     getExpenses, saveExpense, reverseExpense, getExpensesInRange,
     getStockMovements,

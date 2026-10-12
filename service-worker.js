@@ -1,5 +1,5 @@
 /* Janets Karenderya — Service Worker (offline-first) */
-const VERSION = 'jk-v1.0.2';
+const VERSION = 'jk-v1.2.0';
 const STATIC_CACHE = 'jk-static-' + VERSION;
 
 // Resolve base path so the SW works when hosted from a GitHub Pages subdirectory.
